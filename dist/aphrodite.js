@@ -60,9 +60,47 @@ module.exports =
 
 	var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i['return']) _i['return'](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError('Invalid attempt to destructure non-iterable instance'); } }; })();
 
+	var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
+
+	function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) arr2[i] = arr[i]; return arr2; } else { return Array.from(arr); } }
+
+	function _defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
+
 	var _util = __webpack_require__(2);
 
 	var _inject = __webpack_require__(3);
+
+	// TODO(emily): Make a 'production' mode which doesn't prepend the class name
+	// here, to make the generated CSS smaller.
+	var makeClassName = function makeClassName(key, vals) {
+	    return key + '_' + (0, _util.hashObject)(vals);
+	};
+
+	// Find all of the references to descendant styles in a given definition,
+	// generates a class name for each of them based on the class name of the
+	// parent, and stores that name in a special `_names` object on the style.
+	var findAndTagDescendants = function findAndTagDescendants(styles, base) {
+	    var names = arguments.length <= 2 || arguments[2] === undefined ? {} : arguments[2];
+
+	    Object.keys(styles).forEach(function (key) {
+	        if (key[0] === ':' || key[0] === '@') {
+	            findAndTagDescendants(styles[key], base, names);
+	        } else if (key[0] === '>' && key[1] === '>') {
+	            findAndTagDescendants(styles[key], base, names);
+
+	            var _name = base + '__' + key.slice(2);
+
+	            names[key.slice(2)] = {
+	                _isPlainClassName: true,
+	                _className: _name
+	            };
+
+	            styles[key]._names = _defineProperty({}, _name, true);
+	        }
+	    });
+
+	    return names;
+	};
 
 	var StyleSheet = {
 	    create: function create(sheetDefinition) {
@@ -72,12 +110,12 @@ module.exports =
 	            var key = _ref2[0];
 	            var val = _ref2[1];
 
-	            return [key, {
-	                // TODO(emily): Make a 'production' mode which doesn't prepend
-	                // the class name here, to make the generated CSS smaller.
-	                _name: key + '_' + (0, _util.hashObject)(val),
+	            var name = makeClassName(key, val);
+
+	            return [key, _extends({
+	                _name: name,
 	                _definition: val
-	            }];
+	            }, findAndTagDescendants(val, name))];
 	        });
 	    },
 
@@ -105,6 +143,10 @@ module.exports =
 	    }
 	};
 
+	var isPlainClassName = function isPlainClassName(def) {
+	    return def._isPlainClassName;
+	};
+
 	var css = function css() {
 	    for (var _len = arguments.length, styleDefinitions = Array(_len), _key = 0; _key < _len; _key++) {
 	        styleDefinitions[_key] = arguments[_key];
@@ -121,14 +163,29 @@ module.exports =
 	        return "";
 	    }
 
-	    var className = validDefinitions.map(function (s) {
+	    // Filter out "plain class name" arguments, which just want us to add a
+	    // classname to the end result, instead of generating styles.
+	    var plainClassNames = validDefinitions.filter(isPlainClassName).map(function (def) {
+	        return def._className;
+	    });
+
+	    var otherDefinitions = validDefinitions.filter(function (def) {
+	        return !isPlainClassName(def);
+	    });
+
+	    // If there are only plain class names, just join those.
+	    if (otherDefinitions.length === 0) {
+	        return plainClassNames.join(" ");
+	    }
+
+	    var className = otherDefinitions.map(function (s) {
 	        return s._name;
 	    }).join("-o_O-");
-	    (0, _inject.injectStyleOnce)(className, '.' + className, validDefinitions.map(function (d) {
+	    (0, _inject.injectStyleOnce)(className, '.' + className, otherDefinitions.map(function (d) {
 	        return d._definition;
 	    }));
 
-	    return className;
+	    return [className].concat(_toConsumableArray(plainClassNames)).join(" ");
 	};
 
 	exports['default'] = {
@@ -218,6 +275,9 @@ module.exports =
 	 */
 	var isUnitlessNumber = {
 	    animationIterationCount: true,
+	    borderImageOutset: true,
+	    borderImageSlice: true,
+	    borderImageWidth: true,
 	    boxFlex: true,
 	    boxFlexGroup: true,
 	    boxOrdinalGroup: true,
@@ -243,8 +303,11 @@ module.exports =
 
 	    // SVG-related properties
 	    fillOpacity: true,
+	    floodOpacity: true,
 	    stopOpacity: true,
+	    strokeDasharray: true,
 	    strokeDashoffset: true,
+	    strokeMiterlimit: true,
 	    strokeOpacity: true,
 	    strokeWidth: true
 	};
@@ -350,13 +413,13 @@ module.exports =
 	};
 
 	exports.hashObject = hashObject;
-	var importantRegexp = /^([^:]+:.*?)( !important)?$/;
+	var IMPORTANT_RE = /^([^:]+:.*?)( !important)?$/;
 
 	// Given a style string like "a: b; c: d;", adds !important to each of the
 	// properties to generate "a: b !important; c: d !important;".
 	var importantify = function importantify(string) {
 	    return string.split(";").map(function (str) {
-	        return str.replace(importantRegexp, function (_, base, important) {
+	        return str.replace(IMPORTANT_RE, function (_, base, important) {
 	            return base + " !important";
 	        });
 	    }).join(";");
@@ -878,6 +941,8 @@ module.exports =
 
 	var _slicedToArray = (function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i['return']) _i['return'](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError('Invalid attempt to destructure non-iterable instance'); } }; })();
 
+	var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
+
 	function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
 
 	var _inlineStylePrefixer = __webpack_require__(7);
@@ -886,32 +951,75 @@ module.exports =
 
 	var _util = __webpack_require__(2);
 
+	// In a bundle of styles, find all of the different class names that a single
+	// named descendant selector can have.
+	var findNamesForDescendants = function findNamesForDescendants(styles, names) {
+	    Object.keys(styles).forEach(function (key) {
+	        if (key[0] === ':' || key[0] === '@') {
+	            // Recurse for pseudo or @media styles
+	            findNamesForDescendants(styles[key], names);
+	        } else if (key[0] === '>' && key[1] === '>') {
+	            // Recurse for descendant styles
+	            findNamesForDescendants(styles[key], names);
+
+	            // Pluck out all of the names in the _names object.
+	            Object.keys(styles[key]._names).forEach(function (name) {
+	                names[key] = names[key] || [];
+	                names[key].push(name);
+	            });
+	        }
+	    });
+	};
+
 	var generateCSS = function generateCSS(selector, styleTypes, stringHandlers, useImportant) {
 	    var merged = styleTypes.reduce(_util.recursiveMerge);
 
+	    var classNamesForDescendant = {};
+	    findNamesForDescendants(merged, classNamesForDescendant);
+
+	    return generateCSSInner(selector, merged, stringHandlers, useImportant, classNamesForDescendant);
+	};
+
+	exports.generateCSS = generateCSS;
+	var generateCSSInner = function generateCSSInner(selector, style, stringHandlers, useImportant, classNamesForDescendant) {
 	    var declarations = {};
 	    var mediaQueries = {};
+	    var descendants = {};
 	    var pseudoStyles = {};
 
-	    Object.keys(merged).forEach(function (key) {
+	    Object.keys(style).forEach(function (key) {
 	        if (key[0] === ':') {
-	            pseudoStyles[key] = merged[key];
+	            pseudoStyles[key] = style[key];
 	        } else if (key[0] === '@') {
-	            mediaQueries[key] = merged[key];
+	            mediaQueries[key] = style[key];
+	        } else if (key[0] === '>' && key[1] === '>') {
+	            (function () {
+	                // So we don't generate weird "_names: [Object object]" styles,
+	                // make a copy of the styles and get rid of the _names value.
+	                var stylesWithoutNames = _extends({}, style[key]);
+	                delete stylesWithoutNames._names;
+
+	                // Since our child might have many different names, generate the
+	                // styles for all of the possible ones.
+	                classNamesForDescendant[key].forEach(function (name) {
+	                    descendants[name] = stylesWithoutNames;
+	                });
+	            })();
 	        } else {
-	            declarations[key] = merged[key];
+	            declarations[key] = style[key];
 	        }
 	    });
 
 	    return generateCSSRuleset(selector, declarations, stringHandlers, useImportant) + Object.keys(pseudoStyles).map(function (pseudoSelector) {
-	        return generateCSSRuleset(selector + pseudoSelector, pseudoStyles[pseudoSelector], stringHandlers, useImportant);
+	        return generateCSSInner(selector + pseudoSelector, pseudoStyles[pseudoSelector], stringHandlers, useImportant, classNamesForDescendant);
 	    }).join("") + Object.keys(mediaQueries).map(function (mediaQuery) {
-	        var ruleset = generateCSS(selector, [mediaQueries[mediaQuery]], stringHandlers, useImportant);
+	        var ruleset = generateCSSInner(selector, mediaQueries[mediaQuery], stringHandlers, useImportant, classNamesForDescendant);
 	        return mediaQuery + '{' + ruleset + '}';
+	    }).join("") + Object.keys(descendants).map(function (descendant) {
+	        return generateCSSInner(selector + ' .' + descendant, descendants[descendant], stringHandlers, useImportant, classNamesForDescendant);
 	    }).join("");
 	};
 
-	exports.generateCSS = generateCSS;
 	var runStringHandlers = function runStringHandlers(declarations, stringHandlers) {
 	    var result = {};
 
